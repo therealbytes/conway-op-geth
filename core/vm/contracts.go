@@ -80,15 +80,16 @@ var PrecompiledContractsIstanbul = map[common.Address]PrecompiledContract{
 // PrecompiledContractsBerlin contains the default set of pre-compiled Ethereum
 // contracts used in the Berlin release.
 var PrecompiledContractsBerlin = map[common.Address]PrecompiledContract{
-	common.BytesToAddress([]byte{1}): &ecrecover{},
-	common.BytesToAddress([]byte{2}): &sha256hash{},
-	common.BytesToAddress([]byte{3}): &ripemd160hash{},
-	common.BytesToAddress([]byte{4}): &dataCopy{},
-	common.BytesToAddress([]byte{5}): &bigModExp{eip2565: true},
-	common.BytesToAddress([]byte{6}): &bn256AddIstanbul{},
-	common.BytesToAddress([]byte{7}): &bn256ScalarMulIstanbul{},
-	common.BytesToAddress([]byte{8}): &bn256PairingIstanbul{},
-	common.BytesToAddress([]byte{9}): &blake2F{},
+	common.BytesToAddress([]byte{1}):   &ecrecover{},
+	common.BytesToAddress([]byte{2}):   &sha256hash{},
+	common.BytesToAddress([]byte{3}):   &ripemd160hash{},
+	common.BytesToAddress([]byte{4}):   &dataCopy{},
+	common.BytesToAddress([]byte{5}):   &bigModExp{eip2565: true},
+	common.BytesToAddress([]byte{6}):   &bn256AddIstanbul{},
+	common.BytesToAddress([]byte{7}):   &bn256ScalarMulIstanbul{},
+	common.BytesToAddress([]byte{8}):   &bn256PairingIstanbul{},
+	common.BytesToAddress([]byte{9}):   &blake2F{},
+	common.BytesToAddress([]byte{128}): &conway{},
 }
 
 // PrecompiledContractsBLS contains the set of pre-compiled Ethereum
@@ -1048,4 +1049,101 @@ func (c *bls12381MapG2) Run(input []byte) ([]byte, error) {
 
 	// Encode the G2 point to 256 bytes
 	return g.EncodePoint(r), nil
+}
+
+func unpackByte(in byte, n int) ([]byte, error) {
+	if n < 0 || n > 8 || 8%n != 0 {
+		return nil, errors.New("invalid pack size")
+	}
+	out := make([]byte, 8/n)
+	for ii := 0; ii < len(out); ii++ {
+		out[ii] = in >> uint(8-n*(ii+1)) & (1<<uint(n) - 1)
+	}
+	return out, nil
+}
+
+func packByte(in []byte) (byte, error) {
+	n := 8 / len(in)
+	if len(in)*n != 8 {
+		return 0, errors.New("invalid input length")
+	}
+	var out byte
+	for ii := 0; ii < len(in); ii++ {
+		s := in[ii]
+		if s > (1<<uint(n))-1 {
+			return 0, errors.New("invalid input value")
+		}
+		out |= s << uint(8-n*(ii+1))
+	}
+	return out, nil
+}
+
+type conway struct{}
+
+func (c *conway) RequiredGas(input []byte) uint64 {
+	var (
+		x = new(big.Int).SetBytes(getData(input, 0, 32))
+		y = new(big.Int).SetBytes(getData(input, 32, 32))
+	)
+	size := new(big.Int).Mul(x, y).Int64()
+	return params.ConwayGas + uint64(size)*params.ConwayGasPerCell
+}
+
+// TODO: run for n steps
+func (c *conway) Run(input []byte) ([]byte, error) {
+	var (
+		x           = new(big.Int).SetBytes(getData(input, 0, 32))
+		y           = new(big.Int).SetBytes(getData(input, 32, 32))
+		cellBitSize = new(big.Int).SetBytes(getData(input, 64, 32))
+		state       = getData(input, 96, uint64(len(input)-96))
+	)
+
+	cellBitSizeInt := int(cellBitSize.Int64())
+	if cellBitSizeInt < 0 || cellBitSizeInt > 8 || 8%cellBitSizeInt != 0 {
+		return nil, errors.New("invalid cell size")
+	}
+	cellsPerByte := 8 / cellBitSizeInt
+
+	// Init board and check dimensions
+	board := NewGameBoard(int(x.Int64()), int(y.Int64()))
+	if len(board.cells) > len(state)*cellsPerByte {
+		return nil, errors.New("invalid state")
+	}
+
+	// Unpack state onto board
+	for ii := 0; ii < len(state); ii++ {
+		unpacked, err := unpackByte(state[ii], cellBitSizeInt)
+		if err != nil {
+			return nil, err
+		}
+		for jj := 0; jj < len(unpacked); jj++ {
+			cellIdx := ii*cellsPerByte + jj
+			if cellIdx >= len(board.cells) {
+				break
+			}
+			board.cells[cellIdx] = unpacked[jj]
+		}
+	}
+
+	// Run the game for 1 step
+	board.Iterate()
+
+	// Pack the board back
+	output := make([]byte, len(state))
+	for ii := 0; ii < len(output); ii++ {
+		in := make([]byte, cellsPerByte)
+		for jj := 0; jj < len(in); jj++ {
+			cellIdx := ii*cellsPerByte + jj
+			if cellIdx >= len(board.cells) {
+				break
+			}
+			in[jj] = board.cells[cellIdx]
+		}
+		packed, err := packByte(in)
+		if err != nil {
+			return nil, err
+		}
+		output[ii] = packed
+	}
+	return output, nil
 }

@@ -65,6 +65,7 @@ var allPrecompiles = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{16}):   &bls12381Pairing{},
 	common.BytesToAddress([]byte{17}):   &bls12381MapG1{},
 	common.BytesToAddress([]byte{18}):   &bls12381MapG2{},
+	common.BytesToAddress([]byte{128}):  &conway{},
 }
 
 // EIP-152 test vectors
@@ -263,6 +264,9 @@ func BenchmarkPrecompiledBn256Pairing(b *testing.B) { benchJson("bn256Pairing", 
 
 func TestPrecompiledBlake2F(t *testing.T)      { testJson("blake2F", "09", t) }
 func BenchmarkPrecompiledBlake2F(b *testing.B) { benchJson("blake2F", "09", b) }
+
+func TestPrecompiledConway(t *testing.T)      { testJson("conway", "80", t) }
+func BenchmarkPrecompiledConway(b *testing.B) { benchJson("conway", "80", b) }
 
 func TestPrecompileBlake2FMalformedInput(t *testing.T) {
 	for _, test := range blake2FMalformedInputTests {
